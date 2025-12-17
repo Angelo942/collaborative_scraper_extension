@@ -4,31 +4,37 @@
 const LOAD_DELAY_MS = 2000;
 // scopus is almost instantaneous, webofscience takes ~6s
 
-let SESSION_TOKEN = null; // token set by server via instructions
-
-// Load the token from storage (if previously set)
-chrome.storage.local.get("sessionToken", (data) => {
-  SESSION_TOKEN = data.sessionToken || null;
-  console.log("[EXT] Loaded session token from storage:", SESSION_TOKEN);
-});
-
 // Capture the full page HTML and metadata
-function getDomSnapshot() {
-  try {
-    const html = document.documentElement.outerHTML;
-    const urlObj = new URL(location.href);
-    const meta = {
-      url: location.href,
-      domain: urlObj.hostname,
-      title: document.title,
-      timestamp: new Date().toISOString()
-    };
+function getDomSnapshot(callback) {
+  chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
+    if (!tabId) {
+      callback({ error: "Cannot get tabId", token: null });
+      return;
+    }
 
-    console.log("[EXT] Using session token:", SESSION_TOKEN);
-    return { html, meta, token: SESSION_TOKEN }; // include token
-  } catch (err) {
-    return { error: String(err), token: SESSION_TOKEN };
-  }
+    const key = `sessionToken:${tabId}`;
+
+    chrome.storage.local.get(key, (data) => {
+      const token = data[key] || null;
+      PAGE_TOKEN = token; // update in-memory variable
+
+      try {
+        const html = document.documentElement.outerHTML;
+        const urlObj = new URL(location.href);
+        const meta = {
+          url: location.href,
+          domain: urlObj.hostname,
+          title: document.title,
+          timestamp: new Date().toISOString()
+        };
+
+        console.log("[EXT] Using session token from storage:", token);
+        callback({ html, meta, token });
+      } catch (err) {
+        callback({ error: String(err), token });
+      }
+    });
+  });
 }
 
 // Apply instructions returned by the server immediately
@@ -58,11 +64,25 @@ function applyInstructions(instructions) {
         window.location.href = ins.url; // navigate immediately
       } 
       else if (ins.type === "set_token" && ins.token) {
-        console.log("[EXT] Setting session token:", ins.token);
-        SESSION_TOKEN = ins.token;
-        chrome.storage.local.set({ sessionToken: SESSION_TOKEN }, () => {
-          console.log("[EXT] Session token saved to storage:", SESSION_TOKEN);
+        console.log("[EXT] Setting per-tab session token:", ins.token);
+        PAGE_TOKEN = ins.token;
+
+        chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
+          if (!tabId) return;
+
+          const key = `sessionToken:${tabId}`;
+
+          chrome.storage.local.set({ [key]: PAGE_TOKEN }, () => {
+            console.log("[EXT] Session token saved for tab", tabId, PAGE_TOKEN);
+          });
         });
+      }
+      else if (ins.type === "reload") {
+        console.log("[EXT] Reload instruction received");
+
+        setTimeout(() => {
+          window.location.reload();
+        }, 500); // wait 0.5s
       }
       else if (ins.type === "zotero_save") {
         console.log("[EXT] Triggering Zotero save via browser extension");
@@ -92,16 +112,11 @@ function sendSnapshot(snapshot) {
 
 // Wait for initial page load delay, then capture and send
 setTimeout(() => {
-  const snapshot = getDomSnapshot();
-  sendSnapshot(snapshot);
-}, LOAD_DELAY_MS);
-
-// 🔁 Poll every few seconds for pending instructions (added section)
-setInterval(() => {
-  chrome.runtime.sendMessage({ action: "getInstructions" }, (resp) => {
-    if (chrome.runtime.lastError) return;
-    if (resp?.instructions) {
-      applyInstructions(resp.instructions);
+  getDomSnapshot((snapshot) => {
+    if (!snapshot) {
+      console.error("Failed to get snapshot");
+      return;
     }
+    sendSnapshot(snapshot);
   });
-}, 3000 + Math.random() * 2000); // 3–5s random interval
+}, LOAD_DELAY_MS);
