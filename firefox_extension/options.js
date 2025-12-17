@@ -1,19 +1,33 @@
 // Load saved settings
 document.addEventListener('DOMContentLoaded', () => {
-  chrome.storage.sync.get(['serverIP', 'serverPort'], (data) => {
-    if (data.serverIP) document.getElementById('server-ip').value = data.serverIP;
-    if (data.serverPort) document.getElementById('server-port').value = data.serverPort;
-  });
-});
+  const ipInput = document.getElementById('server-ip');
+  const portInput = document.getElementById('server-port');
+  const saveBtn = document.getElementById('save-btn');
+  const status = document.getElementById('status');
 
-// Save settings
-document.getElementById('save-btn').addEventListener('click', () => {
-  const ip = document.getElementById('server-ip').value;
-  const port = document.getElementById('server-port').value;
+  if (!ipInput || !portInput || !saveBtn || !status) {
+    console.error("Options page elements missing");
+    return;
+  }
 
-  chrome.storage.sync.set({ serverIP: ip, serverPort: port }, () => {
-    const status = document.getElementById('status');
-    status.textContent = 'Settings saved!';
-    setTimeout(() => status.textContent = '', 2000);
+  // Load saved settings with defaults
+  chrome.storage.local.get(
+    { serverIP: "127.0.0.1", serverPort: "5000" }, // defaults
+    (data) => {
+      data = data || {};
+      ipInput.value = data.serverIP || "127.0.0.1";
+      portInput.value = data.serverPort || "5000";
+    }
+  );
+
+  // Save settings
+  saveBtn.addEventListener('click', () => {
+    chrome.storage.local.set(
+      { serverIP: ipInput.value, serverPort: portInput.value },
+      () => {
+        status.textContent = 'Settings saved!';
+        setTimeout(() => status.textContent = '', 2000);
+      }
+    );
   });
 });
