@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "name": "PageSenderLocalDemo",
+  "version": "0.1",
+  "description": "Sends page HTML to a local server after a delay and applies returned instructions",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.webofscience.com/*",
+        "https://www.scopus.com/*",
+        "https://www.sciencedirect.com/*"
+      ],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}
