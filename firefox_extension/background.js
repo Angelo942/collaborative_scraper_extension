@@ -27,6 +27,24 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status !== "complete" || !tab.url) return;
+
+  chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+    const allowed = allowedSites.some(site => tab.url.startsWith(site));
+    if (!allowed) return;
+
+    chrome.tabs.executeScript(tabId, {
+      file: "content_script.js",
+      runAt: "document_idle"
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.debug("[EXT] Injection skipped:", chrome.runtime.lastError.message);
+      }
+    });
+  });
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "sendSnapshot") {
     fetch(SERVER_URL, {
