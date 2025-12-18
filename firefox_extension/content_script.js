@@ -79,44 +79,54 @@ function applyInstructions(instructions) {
         try {
           const redirectUrl = new URL(ins.url);
           const baseSite = redirectUrl.origin; // e.g., https://example.com
+          chrome.storage.local.get({ allowRedirect: false }, (settings) => {
+            const allow_redirect = Boolean(settings.allowRedirect);
 
-          chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-            const isAllowed = allowedSites.some(site => baseSite === site);
-
-            if (isAllowed) {
-              console.log("[EXT] Redirect allowed to", ins.url);
-              window.location.href = ins.url;
+            if (!allow_redirect) {
+              console.log("[EXT] User didn't allow redirect!");
+              return;
             } else {
-              const msg = `The server wants to redirect you to a page outside the allowed sites:\n\n${ins.url}\n\nThe page will NOT be sent back to the server until you explicitly add "${baseSite}" in the Allowed Sites.\n\nTo update the plugin settings, click "OK" to open the options page, then add the site under Allowed Sites.`;
-              const follow = confirm(msg);
-              if (follow) {
-                // Open options page so user can add the site
-                chrome.runtime.sendMessage({ action: "openOptions" });
-                // Wait and then re-check the allowed sites
-                setTimeout(() => {
-                  const followMsg = `Once you have added "${baseSite}" to the Allowed Sites, click OK to follow the redirect.`;
-                  const followNow = confirm(followMsg);
-
-                  if (followNow) {
-                    // Re-check allowed sites before redirecting
-                    chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-                      const isNowAllowed = allowedSites.includes(baseSite);
-                      if (isNowAllowed) {
-                        console.log("[EXT] Redirect allowed to", ins.url);
-                        window.location.href = ins.url;
-                      } else {
-                        console.log("[EXT] Redirect blocked: site not in allowed list after user update:", baseSite);
-                        alert(`"${baseSite}" was not found in the allowed sites.`);
-                      }
-                    });
-                  } else {
-                    console.log("[EXT] Redirect cancelled by user after updating settings.");
-                  }
-                }, 500); // small delay to let options page open. Somehow without the program crashes.
-              } else {
-                console.log("[EXT] Redirect blocked by user:", ins.url);
-              }
+              console.log("[EXT] Redirect was allowed!");
             }
+
+            chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+              const isAllowed = allowedSites.some(site => baseSite === site);
+
+              if (isAllowed) {
+                console.log("[EXT] Redirect allowed to", ins.url);
+                window.location.href = ins.url;
+              } else {
+                const msg = `The server wants to redirect you to a page outside the allowed sites:\n\n${ins.url}\n\nThe page will NOT be sent back to the server until you explicitly add "${baseSite}" in the Allowed Sites.\n\nTo update the plugin settings, click "OK" to open the options page, then add the site under Allowed Sites.`;
+                const follow = confirm(msg);
+                if (follow) {
+                  // Open options page so user can add the site
+                  chrome.runtime.sendMessage({ action: "openOptions" });
+                  // Wait and then re-check the allowed sites
+                  setTimeout(() => {
+                    const followMsg = `Once you have added "${baseSite}" to the Allowed Sites, click OK to follow the redirect.`;
+                    const followNow = confirm(followMsg);
+
+                    if (followNow) {
+                      // Re-check allowed sites before redirecting
+                      chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+                        const isNowAllowed = allowedSites.includes(baseSite);
+                        if (isNowAllowed) {
+                          console.log("[EXT] Redirect allowed to", ins.url);
+                          window.location.href = ins.url;
+                        } else {
+                          console.log("[EXT] Redirect blocked: site not in allowed list after user update:", baseSite);
+                          alert(`"${baseSite}" was not found in the allowed sites.`);
+                        }
+                      });
+                    } else {
+                      console.log("[EXT] Redirect cancelled by user after updating settings.");
+                    }
+                  }, 500); // small delay to let options page open. Somehow without the program crashes.
+                } else {
+                  console.log("[EXT] Redirect blocked by user:", ins.url);
+                }
+              }
+            });
           });
         } catch (err) {
           console.error("[EXT] Redirect error:", err);
@@ -137,11 +147,19 @@ function applyInstructions(instructions) {
         });
       }
       else if (ins.type === "reload") {
-        console.log("[EXT] Reload instruction received");
+        console.log("[EXT] Reload instruction received.");
+      
+        chrome.storage.local.get({ allowRedirect: false }, (settings) => {
+          const allow_redirect = Boolean(settings.allowRedirect);
 
-        setTimeout(() => {
-          window.location.reload();
-        }, 500); // wait 0.5s
+          if (allow_redirect) {
+            setTimeout(() => {
+              window.location.reload();
+            }, 500); // wait 0.5s
+          } else {
+            console.log("[EXT] Redirect blocked so won't reload page.");
+          }
+        });
       }
       else if (ins.type === "zotero_save") {
         console.log("[EXT] Triggering Zotero save via browser extension");
