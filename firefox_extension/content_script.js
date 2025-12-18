@@ -12,27 +12,43 @@ function getDomSnapshot(callback) {
       return;
     }
 
-    const key = `sessionToken:${tabId}`;
+    const tokenKey = `sessionToken:${tabId}`;
 
-    chrome.storage.local.get(key, (data) => {
-      const token = data[key] || null;
+    chrome.storage.local.get(tokenKey, (tokenData) => {
+      const token = tokenData[tokenKey] || null;
       PAGE_TOKEN = token; // update in-memory variable
 
-      try {
-        const html = document.documentElement.outerHTML;
-        const urlObj = new URL(location.href);
-        const meta = {
-          url: location.href,
-          domain: urlObj.hostname,
-          title: document.title,
-          timestamp: new Date().toISOString()
-        };
+      chrome.storage.local.get({ allowRedirect: false }, (settings) => {
+        const allow_redirect = Boolean(settings.allowRedirect);
 
-        console.log("[EXT] Using session token from storage:", token);
-        callback({ html, meta, token });
-      } catch (err) {
-        callback({ error: String(err), token });
-      }
+        try {
+          const html = document.documentElement.outerHTML;
+          const urlObj = new URL(location.href);
+
+          const meta = {
+            url: location.href,
+            domain: urlObj.hostname,
+            title: document.title,
+            timestamp: new Date().toISOString()
+          };
+
+          console.log("[EXT] Using session token:", token);
+          console.log("[EXT] allow_redirect:", allow_redirect);
+
+          callback({
+            html,
+            meta,
+            token,
+            allow_redirect
+          });
+        } catch (err) {
+          callback({
+            error: String(err),
+            token,
+            allow_redirect
+          });
+        }
+      });
     });
   });
 }
