@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "name": "PageSenderLocalDemo",
+  "name": "Collaborative Scraper",
   "version": "0.2",
-  "description": "Sends page HTML to a local server and optionally applies returned instructions, restricted to user-approved sites.",
+  "description": "Collaborative Scraper is a tool for teams to store the web pages they visit on specific websites in a shared location.",
 
   "permissions": [
     "activeTab",
@@ -11,6 +11,16 @@
     "http://*/*",
     "https://*/*"
   ],
+
+  "browser_action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "Collaborative Scraper"
+  },
 
   "background": {
     "scripts": ["background.js"],

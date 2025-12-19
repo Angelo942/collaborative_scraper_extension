@@ -2,7 +2,6 @@
 
 // Configurable delay to let page load/render (ms)
 const LOAD_DELAY_MS = 2000;
-// scopus is almost instantaneous, webofscience takes ~6s
 
 // Capture the full page HTML and metadata
 function getDomSnapshot(callback) {
@@ -32,7 +31,7 @@ function getDomSnapshot(callback) {
             timestamp: new Date().toISOString()
           };
 
-          console.log("[EXT] Using session token:", token);
+          console.log("[EXT] Using request token:", token);
           console.log("[EXT] allow_redirect:", allow_redirect);
 
           callback({
@@ -62,18 +61,6 @@ function applyInstructions(instructions) {
       if (ins.type === "insert_html" && ins.selector && ins.html) {
         const el = document.querySelector(ins.selector);
         if (el) el.insertAdjacentHTML(ins.position || "beforeend", ins.html);
-      } 
-      else if (ins.type === "set_text" && ins.selector) {
-        const el = document.querySelector(ins.selector);
-        if (el) el.textContent = ins.text || "";
-      } 
-      else if (ins.type === "remove" && ins.selector) {
-        const el = document.querySelector(ins.selector);
-        if (el) el.remove();
-      } 
-      else if (ins.type === "run_safe_script" && ins.fn_body) {
-        const fn = new Function("document", "window", ins.fn_body);
-        fn(document, window);
       } 
       else if (ins.type === "redirect" && ins.url) {
         try {
@@ -160,11 +147,6 @@ function applyInstructions(instructions) {
             console.log("[EXT] Redirect blocked so won't reload page.");
           }
         });
-      }
-      else if (ins.type === "zotero_save") {
-        console.log("[EXT] Triggering Zotero save via browser extension");
-        // send message to Zotero connector
-        window.postMessage({ type: "Zotero-Connector_Browser_Save", data: { url: location.href } }, "*");
       }
     } catch (e) {
       console.error("applyInstruction error:", e);
