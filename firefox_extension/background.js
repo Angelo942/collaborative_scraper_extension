@@ -32,16 +32,28 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 
   chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
     const allowed = allowedSites.some(site => tab.url.startsWith(site));
-    if (!allowed) return;
 
-    chrome.tabs.executeScript(tabId, {
-      file: "content_script.js",
-      runAt: "document_idle"
-    }, () => {
-      if (chrome.runtime.lastError) {
-        console.debug("[EXT] Injection skipped:", chrome.runtime.lastError.message);
-      }
-    });
+    if (allowed) {
+      // ✅ Allowed → inject capture script
+      chrome.tabs.executeScript(tabId, {
+        file: "content_script.js",
+        runAt: "document_idle"
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.debug("[EXT] Capture injection skipped:", chrome.runtime.lastError.message);
+        }
+      });
+    } else {
+      // 🚧 Not allowed → inject gatekeeper only
+      chrome.tabs.executeScript(tabId, {
+        file: "gatekeeper.js",
+        runAt: "document_idle"
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.debug("[EXT] Gatekeeper injection skipped:", chrome.runtime.lastError.message);
+        }
+      });
+    }
   });
 });
 
@@ -73,4 +85,73 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   else if (msg.type === "GET_TAB_ID") {
     sendResponse(sender.tab?.id);
   }
+});
+
+chrome.browserAction.onClicked.addListener((tab) => {
+  if (!tab?.id || !tab.url) return;
+
+  const site = new URL(tab.url).origin;
+
+  chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+    if (allowedSites.includes(site)) {
+      chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
+      return;
+    }
+
+    chrome.tabs.sendMessage(
+      tab.id,
+      { action: "ASK_ADD_SITE", site },
+      (response) => {
+        if (!response || !response.accepted) {
+          console.log("[EXT] User refused to allow site:", site);
+          return;
+        }
+
+        // User accepted → add site and capture
+        chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+          if (!allowedSites.includes(site)) {
+            allowedSites.push(site);
+          }
+        
+          chrome.tabs.executeScript(tab.id, {
+            file: "content_script.js",
+            runAt: "document_idle"
+          }, () => {
+            if (chrome.runtime.lastError) {
+              console.debug("[EXT] Capture injection skipped:", chrome.runtime.lastError.message);
+            }
+          });
+
+          chrome.storage.local.set({ allowedSites }, () => {
+            chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
+          });
+        });
+      }
+    );
+  });
+});
+
+// Clear data when closing tab and restarting browser
+const TAB_STATE_KEY = 'activeTabs';
+const TOKENS_KEY = 'sessionTokens';
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  chrome.storage.local.get({ [TAB_STATE_KEY]: {} }, (data) => {
+    const activeTabs = data[TAB_STATE_KEY] || {};
+    if (activeTabs[tabId]) {
+      delete activeTabs[tabId];
+      chrome.storage.local.set({ [TAB_STATE_KEY]: activeTabs });
+    }
+  });
+  chrome.storage.local.get({ [TOKENS_KEY]: {} }, (data) => {
+    const activeTabs = data[TOKENS_KEY] || {};
+    if (activeTabs[tabId]) {
+      delete activeTabs[tabId];
+      chrome.storage.local.set({ [TOKENS_KEY]: activeTabs });
+    }
+  });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.local.set({ [TAB_STATE_KEY]: {} });
+  chrome.storage.local.set({ [TOKENS_KEY]: {} });
 });

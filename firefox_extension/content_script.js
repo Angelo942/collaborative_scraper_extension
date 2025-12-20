@@ -2,6 +2,8 @@
 
 // Configurable delay to let page load/render (ms)
 const LOAD_DELAY_MS = 2000;
+const tokenKey = `sessionTokens`;
+const TAB_STATE_KEY = 'activeTabs';
 
 // Capture the full page HTML and metadata
 function getDomSnapshot(callback) {
@@ -11,11 +13,10 @@ function getDomSnapshot(callback) {
       return;
     }
 
-    const tokenKey = `sessionToken:${tabId}`;
-
-    chrome.storage.local.get(tokenKey, (tokenData) => {
-      const token = tokenData[tokenKey] || null;
-      PAGE_TOKEN = token; // update in-memory variable
+    chrome.storage.local.get({ [tokenKey]: {}}, (data) => {
+      const tokens = data[tokenKey] || {};
+      const token = tokens[tabId] || null;
+      PAGE_TOKEN = token;
 
       chrome.storage.local.get({ allowRedirect: false }, (settings) => {
         const allow_redirect = Boolean(settings.allowRedirect);
@@ -123,13 +124,19 @@ function applyInstructions(instructions) {
         console.log("[EXT] Setting per-tab session token:", ins.token);
         PAGE_TOKEN = ins.token;
 
+        // Get current tab ID via runtime message
         chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
           if (!tabId) return;
 
-          const key = `sessionToken:${tabId}`;
+          // Get existing tokens object
+          chrome.storage.local.get({ [tokenKey]: {} }, (data) => {
+            const tokens = data[tokenKey] || {};
+            tokens[tabId] = PAGE_TOKEN; // set/update token for this tab
 
-          chrome.storage.local.set({ [key]: PAGE_TOKEN }, () => {
-            console.log("[EXT] Session token saved for tab", tabId, PAGE_TOKEN);
+            // Save updated object back to storage
+            chrome.storage.local.set({ [tokenKey]: tokens }, () => {
+              console.log("[EXT] Session token saved for tab", tabId, PAGE_TOKEN);
+            });
           });
         });
       }
@@ -169,13 +176,46 @@ function sendSnapshot(snapshot) {
   });
 }
 
-// Wait for initial page load delay, then capture and send
-setTimeout(() => {
-  getDomSnapshot((snapshot) => {
-    if (!snapshot) {
-      console.error("Failed to get snapshot");
-      return;
-    }
-    sendSnapshot(snapshot);
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === "CAPTURE_PAGE") {
+    setTabActive();
+    getDomSnapshot((snapshot) => {
+      if (!snapshot) return;
+      sendSnapshot(snapshot);
+    });
+  }
+});
+
+// Helper: mark this tab as active
+function setTabActive() {
+  chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
+    if (!tabId) return;
+
+    chrome.storage.local.get({ [TAB_STATE_KEY]: {} }, (data) => {
+      const activeTabs = data[TAB_STATE_KEY] || {};
+      activeTabs[tabId] = true;
+      chrome.storage.local.set({ [TAB_STATE_KEY]: activeTabs });
+    });
   });
-}, LOAD_DELAY_MS);
+}
+
+// Send pages only if tab is active
+chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
+  if (!tabId) return;
+
+  chrome.storage.local.get({ [TAB_STATE_KEY]: {} }, (data) => {
+    const activeTabs = data[TAB_STATE_KEY] || {};
+    if (Boolean(activeTabs[tabId])) {
+      // Wait for initial page load delay, then capture and send
+      setTimeout(() => {
+        getDomSnapshot((snapshot) => {
+          if (!snapshot) {
+            console.error("Failed to get snapshot");
+            return;
+          }
+          sendSnapshot(snapshot);
+        });
+      }, LOAD_DELAY_MS);
+    }
+  });
+});
