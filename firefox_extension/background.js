@@ -123,7 +123,9 @@ chrome.browserAction.onClicked.addListener((tab) => {
           });
 
           chrome.storage.local.set({ allowedSites }, () => {
-            chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
+            setTimeout(() => {
+              chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
+            }, 1000); // Wait 1s for the extension to load
           });
         });
       }
