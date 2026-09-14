@@ -1,5 +1,13 @@
 // content_script.js
 
+// Guard against multiple injections into the same document. executeScript can
+// run this file more than once (e.g. onUpdated + a toolbar click), and a second
+// run of the top-level `let` declarations throws "redeclaration of let".
+if (window.__collabScraperInjected) {
+  console.debug("[EXT] content_script already active, skipping re-init");
+} else {
+  window.__collabScraperInjected = true;
+
 // Configurable delay to let page load/render (ms)
 let LOAD_DELAY_MS = 7000;
 const tokenKey = `sessionTokens`;
@@ -228,3 +236,5 @@ chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
     }
   });
 });
+
+} // end injection guard
