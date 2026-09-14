@@ -1,12 +1,13 @@
 // content_script.js
 
 // Configurable delay to let page load/render (ms)
-const LOAD_DELAY_MS = 2000;
+let LOAD_DELAY_MS = 7000;
 const tokenKey = `sessionTokens`;
 const TAB_STATE_KEY = 'activeTabs';
 
 // Capture the full page HTML and metadata
 function getDomSnapshot(callback) {
+  removeServerBanner()
   chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
     if (!tabId) {
       callback({ error: "Cannot get tabId", token: null });
@@ -51,6 +52,12 @@ function getDomSnapshot(callback) {
       });
     });
   });
+}
+
+// Submitting a page with banner breaks the parser
+function removeServerBanner() {
+  const el = document.getElementById("server-banner");
+  if (el) el.remove();
 }
 
 // Apply instructions returned by the server immediately
@@ -147,6 +154,7 @@ function applyInstructions(instructions) {
           const allow_redirect = Boolean(settings.allowRedirect);
 
           if (allow_redirect) {
+            LOAD_DELAY_MS += 1000;
             setTimeout(() => {
               window.location.reload();
             }, 500); // wait 0.5s
@@ -162,6 +170,7 @@ function applyInstructions(instructions) {
 }
 
 // Send snapshot to the background script to POST to local server
+// TODO clear token after sending request
 function sendSnapshot(snapshot) {
   console.log("[EXT] Sending snapshot with token:", snapshot.token);
   chrome.runtime.sendMessage({ action: "sendSnapshot", payload: snapshot }, (resp) => {
