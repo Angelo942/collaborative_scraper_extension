@@ -1,5 +1,15 @@
 // background.js
-let SERVER_URL = `http://127.0.0.1:5000/receive`;
+let SERVER_IP = "127.0.0.1";
+let SERVER_PORT = "5000";
+let SERVER_BASE = `http://${SERVER_IP}:${SERVER_PORT}`;
+let SERVER_URL = `${SERVER_BASE}/receive`;
+let PING_URL = `${SERVER_BASE}/ping`;
+
+function rebuildServerUrls() {
+  SERVER_BASE = `http://${SERVER_IP}:${SERVER_PORT}`;
+  SERVER_URL = `${SERVER_BASE}/receive`;
+  PING_URL = `${SERVER_BASE}/ping`;
+}
 
 function loadServerConfig() {
   chrome.storage.local.get(
@@ -8,21 +18,56 @@ function loadServerConfig() {
       SERVER_IP = data.serverIP || "127.0.0.1";
       SERVER_PORT = data.serverPort || "5000";
 
-      SERVER_URL = `http://${SERVER_IP}:${SERVER_PORT}/receive`;
+      rebuildServerUrls();
       console.log("[EXT] Server URL set to:", SERVER_URL);
     }
   );
 }
 
-// Load at startup
+// Ping the server once to check it is reachable/working. Stores the result in
+// storage (so the options page can display it) and logs it to the console.
+const SERVER_STATUS_KEY = "serverStatus";
+function pingServer(callback) {
+  // Read the configured IP/port fresh so the ping reflects the current
+  // settings even if the in-memory URL hasn't been updated yet.
+  chrome.storage.local.get({ serverIP: SERVER_IP, serverPort: SERVER_PORT }, (data) => {
+    const ip = data.serverIP || SERVER_IP;
+    const port = data.serverPort || SERVER_PORT;
+    const pingUrl = `http://${ip}:${port}/ping`;
+    doPing(pingUrl, callback);
+  });
+}
+
+function doPing(pingUrl, callback) {
+  fetch(pingUrl, { method: "GET" })
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json().catch(() => ({}));
+    })
+    .then(data => {
+      const status = { ok: true, server_response: data.status || "ok", checkedAt: Date.now() };
+      console.log("[EXT] Server ping ok:", status.server_response);
+      chrome.storage.local.set({ [SERVER_STATUS_KEY]: status });
+      if (callback) callback(status);
+    })
+    .catch(err => {
+      const status = { ok: false, error: String(err), checkedAt: Date.now() };
+      console.warn("[EXT] Server ping failed:", err);
+      chrome.storage.local.set({ [SERVER_STATUS_KEY]: status });
+      if (callback) callback(status);
+    });
+}
+
+// Load config at startup, then ping the server once to confirm it works.
 loadServerConfig();
+pingServer();
 
 // Update when user changes settings via options page
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync") {
     if (changes.serverIP) SERVER_IP = changes.serverIP.newValue || SERVER_IP;
     if (changes.serverPort) SERVER_PORT = changes.serverPort.newValue || SERVER_PORT;
-    SERVER_URL = `http://${SERVER_IP}:${SERVER_PORT}/receive`;
+    rebuildServerUrls();
     console.log("[EXT] Server URL updated:", SERVER_URL);
   }
 });
@@ -77,6 +122,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         console.error("Upload failed:", err);
         sendResponse({ error: String(err) });
       });
+    // keep channel open for async response
+    return true;
+  }
+  else if (msg.action === "pingServer") {
+    // On-demand connectivity check (e.g. triggered by the options page).
+    pingServer((status) => sendResponse(status));
     // keep channel open for async response
     return true;
   }

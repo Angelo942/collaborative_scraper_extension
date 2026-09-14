@@ -68,16 +68,46 @@ function removeServerBanner() {
   if (el) el.remove();
 }
 
+// Standardized banner rendered from a { type: "banner", message, level }
+// instruction. The client owns the styling so the server only sends a message
+// and a level ("info" | "error"). Reuses the "server-banner" id so it is
+// cleaned up by removeServerBanner() before the next snapshot is sent (a banner
+// left in the DOM would otherwise break the parser).
+function showServerBanner(message, level = "info") {
+  removeServerBanner();
+  if (!document.body || !message) return;
+
+  const palette = {
+    info:  { bg: "#fffae6", border: "#e6db9a", color: "#5c4b00" },
+    error: { bg: "#ffe6e6", border: "#e6a0a0", color: "#7a1f1f" }
+  };
+  const c = palette[level] || palette.info;
+
+  const banner = document.createElement("div");
+  banner.id = "server-banner";
+  banner.textContent = message;
+  banner.style.cssText =
+    `position:fixed;left:0;right:0;top:0;background:${c.bg};color:${c.color};` +
+    `padding:8px;border-bottom:1px solid ${c.border};z-index:99999;` +
+    "font-family:sans-serif;font-size:14px;text-align:center;";
+  document.body.insertAdjacentElement("afterbegin", banner);
+}
+
 // Apply instructions returned by the server immediately
 function applyInstructions(instructions) {
   if (!Array.isArray(instructions)) return;
 
   for (const ins of instructions) {
     try {
-      if (ins.type === "insert_html" && ins.selector && ins.html) {
+      if (ins.type === "banner" && ins.message) {
+        // Standardized banner command: the server sends a message (+ optional
+        // level), the client renders it. Preferred over raw insert_html.
+        showServerBanner(ins.message, ins.level);
+      }
+      else if (ins.type === "insert_html" && ins.selector && ins.html) {
         const el = document.querySelector(ins.selector);
         if (el) el.insertAdjacentHTML(ins.position || "beforeend", ins.html);
-      } 
+      }
       else if (ins.type === "redirect" && ins.url) {
         try {
           const redirectUrl = new URL(ins.url);
