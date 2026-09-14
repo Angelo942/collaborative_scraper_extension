@@ -3,10 +3,26 @@
 // Guard against multiple injections into the same document. executeScript can
 // run this file more than once (e.g. onUpdated + a toolbar click), and a second
 // run of the top-level `let` declarations throws "redeclaration of let".
+// Note in the console when the tab hasn't been activated yet: no pages are sent
+// until the user clicks the extension toolbar button on this tab.
+function warnIfTabInactive() {
+  chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (tabId) => {
+    if (!tabId) return;
+    chrome.storage.local.get({ activeTabs: {} }, (data) => {
+      if (!data.activeTabs || !data.activeTabs[tabId]) {
+        console.log("[EXT] Tab not active yet; no page will be sent until you click the extension button on this tab.");
+      }
+    });
+  });
+}
+
 if (window.__collabScraperInjected) {
   console.debug("[EXT] content_script already active, skipping re-init");
+  warnIfTabInactive();
 } else {
   window.__collabScraperInjected = true;
+  console.log("[EXT] content_script initializing on", location.href);
+  warnIfTabInactive();
 
 // Configurable delay to let page load/render (ms)
 let LOAD_DELAY_MS = 7000;

@@ -42,7 +42,11 @@ Before using the extension, If you are not hosting the parsing server locally wi
 
 ### Sending Pages
 
-- Clicking the **extension icon** submits the currently open page to the server.
+- Clicking the **extension icon** on a tab does two things:
+  1. It **activates** that tab for sharing, and
+  2. It submits the currently open page to the server.
+- Until you click the icon, **no pages are sent** — even on an allowed site. A freshly opened tab is not active yet, so simply browsing an allowed site will not send anything.
+- Once a tab has been activated, it stays active for the life of the tab: pages you navigate to afterwards are submitted automatically. Activation is reset when the tab is closed (or the browser is restarted), so you need to click the icon again on a new tab.
 
 ---
 
