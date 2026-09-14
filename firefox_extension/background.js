@@ -30,6 +30,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status !== "complete" || !tab.url) return;
 
+  // Only inject into regular web pages. Injecting into extension pages
+  // (moz-extension://), about:, view-source:, etc. is blocked by Firefox
+  // and logs a "Content Script execution ... has been blocked" error.
+  if (!/^https?:\/\//.test(tab.url)) return;
+
   chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
     const allowed = allowedSites.some(site => tab.url.startsWith(site));
 
@@ -89,6 +94,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.browserAction.onClicked.addListener((tab) => {
   if (!tab?.id || !tab.url) return;
+
+  // Only act on regular web pages; extension/about: pages can't be injected.
+  if (!/^https?:\/\//.test(tab.url)) return;
 
   const site = new URL(tab.url).origin;
 
