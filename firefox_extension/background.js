@@ -3,11 +3,13 @@ let SERVER_IP = "127.0.0.1";
 let SERVER_PORT = "5000";
 let SERVER_BASE = `http://${SERVER_IP}:${SERVER_PORT}`;
 let SERVER_URL = `${SERVER_BASE}/receive`;
+let FETCH_RESULT_URL = `${SERVER_BASE}/fetch_result`;
 let PING_URL = `${SERVER_BASE}/ping`;
 
 function rebuildServerUrls() {
   SERVER_BASE = `http://${SERVER_IP}:${SERVER_PORT}`;
   SERVER_URL = `${SERVER_BASE}/receive`;
+  FETCH_RESULT_URL = `${SERVER_BASE}/fetch_result`;
   PING_URL = `${SERVER_BASE}/ping`;
 }
 
@@ -107,21 +109,32 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   });
 });
 
+// POST a payload to the server and pass its instructions back to the content script.
+function postToServer(url, payload, sendResponse) {
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+    .then(r => r.json())
+    .then(data => {
+      sendResponse({ instructions: data.instructions || [], server_response: data.status || "ok" });
+    })
+    .catch(err => {
+      console.error("Upload failed:", err);
+      sendResponse({ error: String(err) });
+    });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "sendSnapshot") {
-    fetch(SERVER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(msg.payload)
-    })
-      .then(r => r.json())
-      .then(data => {
-        sendResponse({ instructions: data.instructions || [], server_response: data.status || "ok" });
-      })
-      .catch(err => {
-        console.error("Upload failed:", err);
-        sendResponse({ error: String(err) });
-      });
+    postToServer(SERVER_URL, msg.payload, sendResponse);
+    // keep channel open for async response
+    return true;
+  }
+  else if (msg.action === "sendFetchResult") {
+    // Response to a FETCH instruction: { token, status, body }.
+    postToServer(FETCH_RESULT_URL, msg.payload, sendResponse);
     // keep channel open for async response
     return true;
   }

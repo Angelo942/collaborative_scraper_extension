@@ -124,62 +124,12 @@ function applyInstructions(instructions) {
         const el = document.querySelector(ins.selector);
         if (el) el.insertAdjacentHTML(ins.position || "beforeend", ins.html);
       }
-      else if (ins.type === "redirect" && ins.url) {
-        try {
-          const redirectUrl = new URL(ins.url);
-          const baseSite = redirectUrl.origin; // e.g., https://example.com
-          chrome.storage.local.get({ allowRedirect: false }, (settings) => {
-            const allow_redirect = Boolean(settings.allowRedirect);
-
-            if (!allow_redirect) {
-              console.log("[EXT] User didn't allow redirect!");
-              return;
-            } else {
-              console.log("[EXT] Redirect was allowed!");
-            }
-
-            chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-              const isAllowed = allowedSites.some(site => baseSite === site);
-
-              if (isAllowed) {
-                console.log("[EXT] Redirect allowed to", ins.url);
-                window.location.href = ins.url;
-              } else {
-                const msg = `The server wants to redirect you to a page outside the allowed sites:\n\n${ins.url}\n\nThe page will NOT be sent back to the server until you explicitly add "${baseSite}" in the Allowed Sites.\n\nTo update the plugin settings, click "OK" to open the options page, then add the site under Allowed Sites.`;
-                const follow = confirm(msg);
-                if (follow) {
-                  // Open options page so user can add the site
-                  chrome.runtime.sendMessage({ action: "openOptions" });
-                  // Wait and then re-check the allowed sites
-                  setTimeout(() => {
-                    const followMsg = `Once you have added "${baseSite}" to the Allowed Sites, click OK to follow the redirect.`;
-                    const followNow = confirm(followMsg);
-
-                    if (followNow) {
-                      // Re-check allowed sites before redirecting
-                      chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-                        const isNowAllowed = allowedSites.includes(baseSite);
-                        if (isNowAllowed) {
-                          console.log("[EXT] Redirect allowed to", ins.url);
-                          window.location.href = ins.url;
-                        } else {
-                          console.log("[EXT] Redirect blocked: site not in allowed list after user update:", baseSite);
-                          alert(`"${baseSite}" was not found in the allowed sites.`);
-                        }
-                      });
-                    } else {
-                      console.log("[EXT] Redirect cancelled by user after updating settings.");
-                    }
-                  }, 500); // small delay to let options page open. Somehow without the program crashes.
-                } else {
-                  console.log("[EXT] Redirect blocked by user:", ins.url);
-                }
-              }
-            });
-          });
-        } catch (err) {
-          console.error("[EXT] Redirect error:", err);
-        }
+      else if (ins.type === "GET" && ins.url) {
+        navigateIfAllowed(ins.url);
+      }
+      else if (ins.type === "FETCH" && ins.url) {
+        // PAGE_TOKEN was just set by the set_token preceding this instruction.
+        fetchFromPage(ins, PAGE_TOKEN);
       }
       else if (ins.type === "set_token" && ins.token) {
         console.log("[EXT] Setting per-tab session token:", ins.token);
@@ -223,11 +173,126 @@ function applyInstructions(instructions) {
   }
 }
 
-// Send snapshot to the background script to POST to local server
-// TODO clear token after sending request
-function sendSnapshot(snapshot) {
-  console.log("[EXT] Sending snapshot with token:", snapshot.token);
-  chrome.runtime.sendMessage({ action: "sendSnapshot", payload: snapshot }, (resp) => {
+// GET instruction: navigate the tab to url, if the user allows redirects and the
+// site is allowed. Otherwise offer to open the options page to add the site.
+function navigateIfAllowed(url) {
+  try {
+    const redirectUrl = new URL(url);
+    const baseSite = redirectUrl.origin; // e.g., https://example.com
+    chrome.storage.local.get({ allowRedirect: false }, (settings) => {
+      const allow_redirect = Boolean(settings.allowRedirect);
+
+      if (!allow_redirect) {
+        console.log("[EXT] User didn't allow redirect!");
+        return;
+      } else {
+        console.log("[EXT] Redirect was allowed!");
+      }
+
+      chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+        const isAllowed = allowedSites.some(site => baseSite === site);
+
+        if (isAllowed) {
+          console.log("[EXT] Redirect allowed to", url);
+          window.location.href = url;
+        } else {
+          const msg = `The server wants to redirect you to a page outside the allowed sites:\n\n${url}\n\nThe page will NOT be sent back to the server until you explicitly add "${baseSite}" in the Allowed Sites.\n\nTo update the plugin settings, click "OK" to open the options page, then add the site under Allowed Sites.`;
+          const follow = confirm(msg);
+          if (follow) {
+            // Open options page so user can add the site
+            chrome.runtime.sendMessage({ action: "openOptions" });
+            // Wait and then re-check the allowed sites
+            setTimeout(() => {
+              const followMsg = `Once you have added "${baseSite}" to the Allowed Sites, click OK to follow the redirect.`;
+              const followNow = confirm(followMsg);
+
+              if (followNow) {
+                // Re-check allowed sites before redirecting
+                chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+                  const isNowAllowed = allowedSites.includes(baseSite);
+                  if (isNowAllowed) {
+                    console.log("[EXT] Redirect allowed to", url);
+                    window.location.href = url;
+                  } else {
+                    console.log("[EXT] Redirect blocked: site not in allowed list after user update:", baseSite);
+                    alert(`"${baseSite}" was not found in the allowed sites.`);
+                  }
+                });
+              } else {
+                console.log("[EXT] Redirect cancelled by user after updating settings.");
+              }
+            }, 500); // small delay to let options page open. Somehow without the program crashes.
+          } else {
+            console.log("[EXT] Redirect blocked by user:", url);
+          }
+        }
+      });
+    });
+  } catch (err) {
+    console.error("[EXT] Redirect error:", err);
+  }
+}
+
+// FETCH instruction: call an API from the current page without navigating, then
+// report the response to the server's /fetch_result, which answers with the
+// next instructions. A blocked or failed fetch is still reported (status 0) so
+// the server moves on; an unreported one would leave this tab waiting forever.
+function fetchFromPage(ins, token) {
+  const report = (status, body) => {
+    console.log("[EXT] Reporting fetch result with token:", token, "status:", status);
+    relayToServer("sendFetchResult", { token, status, body });
+  };
+
+  let target;
+  try {
+    target = new URL(ins.url, location.href);
+  } catch (err) {
+    report(0, `Invalid fetch url: ${ins.url}`);
+    return;
+  }
+
+  chrome.storage.local.get({ allowRedirect: false, allowedSites: [] }, ({ allowRedirect, allowedSites }) => {
+    if (!allowRedirect) {
+      // Interactive mode was turned off: stop here, like a blocked GET. Reporting
+      // would only make the server hand out the next request.
+      console.log("[EXT] User didn't allow redirect, so won't fetch", target.href);
+      return;
+    }
+    // The request carries the page's cookies, so it may only go to the page's
+    // own origin, and only if that site is allowed.
+    if (target.origin !== location.origin || !allowedSites.includes(target.origin)) {
+      console.log("[EXT] Fetch blocked: not the page's origin or not an allowed site:", target.href);
+      report(0, `Fetch blocked: ${target.origin} is not the current page's origin or not an allowed site`);
+      return;
+    }
+
+    // A FETCH is always a POST of a JSON body; the headers are ours to set.
+    const init = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(ins.body != null ? ins.body : {}),
+    };
+
+    // In Firefox a content script's fetch() runs as the extension; content.fetch
+    // makes the request as the page, with its origin and cookies.
+    const pageFetch = (typeof content !== "undefined" && content.fetch)
+      ? (url, opts) => content.fetch(url, opts)
+      : (url, opts) => fetch(url, opts);
+
+    console.log("[EXT] Fetching", init.method, target.href);
+    pageFetch(target.href, init)
+      .then(r => r.text().then(body => report(r.status, body)))
+      .catch(err => {
+        console.warn("[EXT] Fetch failed:", err);
+        report(0, String(err));
+      });
+  });
+}
+
+// Relay a payload to the server through the background script and apply the
+// instructions it answers with.
+function relayToServer(action, payload) {
+  chrome.runtime.sendMessage({ action, payload }, (resp) => {
     if (chrome.runtime.lastError) {
       console.warn("Message failed:", chrome.runtime.lastError);
       return;
@@ -237,6 +302,13 @@ function sendSnapshot(snapshot) {
       applyInstructions(resp.instructions);
     }
   });
+}
+
+// Send snapshot to the background script to POST to local server
+// TODO clear token after sending request
+function sendSnapshot(snapshot) {
+  console.log("[EXT] Sending snapshot with token:", snapshot.token);
+  relayToServer("sendSnapshot", snapshot);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

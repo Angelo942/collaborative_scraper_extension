@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Collaborative Scraper",
-  "version": "1.0",
+  "version": "2.0",
   "description": "Collaborative Scraper is a tool for teams to store the web pages they visit on specific websites in a shared location.",
 
   "permissions": [
