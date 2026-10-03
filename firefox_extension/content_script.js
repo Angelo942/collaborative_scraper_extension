@@ -173,6 +173,18 @@ function applyInstructions(instructions) {
   }
 }
 
+// True if `origin` matches one of the saved allowed sites. Saved entries are
+// reduced to their origin first, so "https://example.com/path/" still matches.
+function isSiteAllowed(allowedSites, origin) {
+  return allowedSites.some(site => {
+    try {
+      return new URL(site).origin === origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
 // GET instruction: navigate the tab to url, if the user allows redirects and the
 // site is allowed. Otherwise offer to open the options page to add the site.
 function navigateIfAllowed(url) {
@@ -190,7 +202,7 @@ function navigateIfAllowed(url) {
       }
 
       chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-        const isAllowed = allowedSites.some(site => baseSite === site);
+        const isAllowed = isSiteAllowed(allowedSites, baseSite);
 
         if (isAllowed) {
           console.log("[EXT] Redirect allowed to", url);
@@ -209,7 +221,7 @@ function navigateIfAllowed(url) {
               if (followNow) {
                 // Re-check allowed sites before redirecting
                 chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-                  const isNowAllowed = allowedSites.includes(baseSite);
+                  const isNowAllowed = isSiteAllowed(allowedSites, baseSite);
                   if (isNowAllowed) {
                     console.log("[EXT] Redirect allowed to", url);
                     window.location.href = url;
@@ -260,7 +272,7 @@ function fetchFromPage(ins, token) {
     }
     // The request carries the page's cookies, so it may only go to the page's
     // own origin, and only if that site is allowed.
-    if (target.origin !== location.origin || !allowedSites.includes(target.origin)) {
+    if (target.origin !== location.origin || !isSiteAllowed(allowedSites, target.origin)) {
       console.log("[EXT] Fetch blocked: not the page's origin or not an allowed site:", target.href);
       report(0, `Fetch blocked: ${target.origin} is not the current page's origin or not an allowed site`);
       return;

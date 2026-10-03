@@ -82,32 +82,41 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   // and logs a "Content Script execution ... has been blocked" error.
   if (!/^https?:\/\//.test(tab.url)) return;
 
+  // Allowed sites get the capture script. Not-allowed sites get nothing here:
+  // the gatekeeper is injected on demand when the toolbar button is clicked.
+  // Use the same origin match as the click handler.
+  const site = new URL(tab.url).origin;
   chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-    const allowed = allowedSites.some(site => tab.url.startsWith(site));
-
-    if (allowed) {
-      // ✅ Allowed → inject capture script
-      chrome.tabs.executeScript(tabId, {
-        file: "content_script.js",
-        runAt: "document_idle"
-      }, () => {
-        if (chrome.runtime.lastError) {
-          console.debug("[EXT] Capture injection skipped:", chrome.runtime.lastError.message);
-        }
-      });
-    } else {
-      // 🚧 Not allowed → inject gatekeeper only
-      chrome.tabs.executeScript(tabId, {
-        file: "gatekeeper.js",
-        runAt: "document_idle"
-      }, () => {
-        if (chrome.runtime.lastError) {
-          console.debug("[EXT] Gatekeeper injection skipped:", chrome.runtime.lastError.message);
-        }
-      });
+    if (isSiteAllowed(allowedSites, site)) {
+      injectScript(tabId, "content_script.js", () => {});
     }
   });
 });
+
+// True if `origin` matches one of the saved allowed sites. Saved entries are
+// reduced to their origin first, so "https://example.com/path/" still matches.
+function isSiteAllowed(allowedSites, origin) {
+  return allowedSites.some(site => {
+    try {
+      return new URL(site).origin === origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Inject a script into the tab (scripts guard against double injection themselves).
+// Calls done(true) once the script has run, done(false) if it couldn't be injected.
+function injectScript(tabId, file, done) {
+  chrome.tabs.executeScript(tabId, { file, runAt: "document_idle" }, () => {
+    if (chrome.runtime.lastError) {
+      console.debug(`[EXT] ${file} injection skipped:`, chrome.runtime.lastError.message);
+      done(false);
+      return;
+    }
+    done(true);
+  });
+}
 
 // POST a payload to the server and pass its instructions back to the content script.
 function postToServer(url, payload, sendResponse) {
@@ -164,44 +173,47 @@ chrome.browserAction.onClicked.addListener((tab) => {
 
   const site = new URL(tab.url).origin;
 
+  // Make sure the capture script is in the tab (it may be missing if the tab was
+  // open before the extension was (re)loaded), then start capturing.
+  const capture = () => {
+    injectScript(tab.id, "content_script.js", (ok) => {
+      if (ok) chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
+    });
+  };
+
   chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-    if (allowedSites.includes(site)) {
-      chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
+    if (isSiteAllowed(allowedSites, site)) {
+      capture();
       return;
     }
 
-    chrome.tabs.sendMessage(
-      tab.id,
-      { action: "ASK_ADD_SITE", site },
-      (response) => {
-        if (!response || !response.accepted) {
-          console.log("[EXT] User refused to allow site:", site);
-          return;
-        }
+    // Not allowed yet → inject the gatekeeper (if not already there) and ask the user.
+    injectScript(tab.id, "gatekeeper.js", (ok) => {
+      if (!ok) return;
 
-        // User accepted → add site and capture
-        chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
-          if (!allowedSites.includes(site)) {
-            allowedSites.push(site);
+      chrome.tabs.sendMessage(
+        tab.id,
+        { action: "ASK_ADD_SITE", site },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn("[EXT] Gatekeeper not reachable:", chrome.runtime.lastError.message);
+            return;
           }
-        
-          chrome.tabs.executeScript(tab.id, {
-            file: "content_script.js",
-            runAt: "document_idle"
-          }, () => {
-            if (chrome.runtime.lastError) {
-              console.debug("[EXT] Capture injection skipped:", chrome.runtime.lastError.message);
-            }
-          });
+          if (!response || !response.accepted) {
+            console.log("[EXT] User refused to allow site:", site);
+            return;
+          }
 
-          chrome.storage.local.set({ allowedSites }, () => {
-            setTimeout(() => {
-              chrome.tabs.sendMessage(tab.id, { action: "CAPTURE_PAGE" });
-            }, 1000); // Wait 1s for the extension to load
+          // User accepted → add site and capture
+          chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+            if (!allowedSites.includes(site)) {
+              allowedSites.push(site);
+            }
+            chrome.storage.local.set({ allowedSites }, capture);
           });
-        });
-      }
-    );
+        }
+      );
+    });
   });
 });
 
