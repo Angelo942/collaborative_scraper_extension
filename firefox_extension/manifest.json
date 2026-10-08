@@ -8,6 +8,7 @@
     "activeTab",
     "storage",
     "tabs",
+    "contextMenus",
     "http://*/*",
     "https://*/*"
   ],
@@ -30,8 +31,15 @@
   },
 
   "background": {
-    "scripts": ["background.js"],
+    "scripts": ["background.js", "devtools/background.js"],
     "persistent": false
+  },
+
+  "sidebar_action": {
+    "default_title": "Parser builder",
+    "default_panel": "devtools/sidebar/sidebar.html",
+    "default_icon": "icons/icon-32.png",
+    "open_at_install": false
   },
 
   "options_ui": {

@@ -250,6 +250,23 @@
           </label>
         </div>
       </div>
+      <div class="field">
+        <div class="toggle-row">
+          <div>
+            <div class="mode-title">Developer Mode</div>
+            <div class="mode-desc">
+              Adds "Pick elements to parse" to the right-click menu of the toolbar button and of pages:
+              select the lists and fields to extract, then export a CSV or a Python parser.
+              Applies immediately.
+            </div>
+          </div>
+
+          <label class="toggle">
+            <input type="checkbox" id="dev-mode" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
       <!-- Allowed Sites Section -->
       <div class="field">
         <label>Allowed Sites</label>
@@ -282,5 +299,6 @@
   </div>
 
   <script src="options.js"></script>
+  <script src="devtools/options.js"></script>
 </body>
 </html>

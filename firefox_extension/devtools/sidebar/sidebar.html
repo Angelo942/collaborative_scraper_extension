@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Parser builder</title>
+  <link rel="stylesheet" href="sidebar.css" />
+</head>
+<body>
+  <header>
+    <h1>Parser builder</h1>
+    <div class="site" id="site"></div>
+  </header>
+
+  <main id="main">
+    <section>
+      <div class="row">
+        <button id="pick-list" type="button">Pick list</button>
+        <button id="pick-fields" type="button">Pick fields</button>
+        <button id="pick-action" type="button" title="Record a click that loads an item's details, as a field read as “click”">Pick action</button>
+      </div>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <section>
+      <h2>Selection</h2>
+      <label class="labelled" id="one-list-as" title="What the list gives in the parser">
+        <span>The list is</span>
+        <select>
+          <option value="items">the elements, the page fields as metadata</option>
+          <option value="properties">a property of one element per page</option>
+        </select>
+      </label>
+      <p class="hint" id="shape"></p>
+      <div id="selection"></div>
+    </section>
+
+    <section>
+      <h2>Preview</h2>
+      <div class="previews" id="preview"></div>
+    </section>
+
+    <section>
+      <h2>Export</h2>
+      <div class="row">
+        <button id="export-python" class="primary" type="button">Python parser</button>
+        <button id="copy-python" type="button">Copy Python script</button>
+        <button id="export-csv" type="button">CSV</button>
+        <button id="export-html" type="button" title="The page as the server receives it, to test the parser offline">Page HTML</button>
+      </div>
+    </section>
+  </main>
+
+  <p class="unavailable" id="unavailable" hidden>Open a web page (http or https) in this tab to build a parser for it.</p>
+
+  <footer id="status"></footer>
+
+  <template id="field-template">
+    <div class="field">
+      <div class="row">
+        <input class="name" title="Column / attribute name" />
+        <select class="reading" title="What to read from the element"></select>
+        <button class="badge scope" type="button"></button>
+        <span class="badge coverage" title="Rows with a value"></span>
+        <button class="icon remove" type="button" title="Remove field">×</button>
+      </div>
+      <input class="xpath" />
+      <label class="labelled wait-for">
+        <span>Changes</span>
+        <input class="xpath" placeholder="any change"
+               title="XPath of the element that changes after the click (editable; empty: any change on the page)" />
+      </label>
+      <div class="sample"></div>
+    </div>
+  </template>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
