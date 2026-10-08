@@ -62,6 +62,10 @@ When interactive mode is active:
 
 The process continues as long as the tab remains open.
 
+#### The `CLICK` instruction
+
+`{ "type": "CLICK", "xpath": "...", "wait_for": "..." }` clicks the first element at `xpath`, waits until the element at `wait_for` has changed (or anything on the page, when it is empty), then sends the page to `/receive` as usual, with the token of the preceding `set_token`. The payload's `meta.click` is `{ xpath, ok, error }`: the page is sent even when the element is missing or nothing changed within 10 s, so the server can move on.
+
 ## Installation
 
 At the moment, the extension is only available for **Firefox** and must be installed manually.

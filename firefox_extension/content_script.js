@@ -131,6 +131,9 @@ function applyInstructions(instructions) {
         // PAGE_TOKEN was just set by the set_token preceding this instruction.
         fetchFromPage(ins, PAGE_TOKEN);
       }
+      else if (ins.type === "CLICK" && ins.xpath) {
+        clickThenSendPage(ins, PAGE_TOKEN);
+      }
       else if (ins.type === "set_token" && ins.token) {
         console.log("[EXT] Setting per-tab session token:", ins.token);
         PAGE_TOKEN = ins.token;
@@ -298,6 +301,93 @@ function fetchFromPage(ins, token) {
         console.warn("[EXT] Fetch failed:", err);
         report(0, String(err));
       });
+  });
+}
+
+const CLICK_TIMEOUT_MS = 10000;
+const CLICK_SETTLED_AFTER_MS = 700;
+
+// CLICK instruction: click an element of the page (e.g. a card that opens a
+// detail panel), wait for the wait_for element to change, then send the page
+// with meta.click. The page is sent even when the click failed, with the error
+// in meta.click, so the server moves on; an unsent page would leave this tab
+// waiting forever.
+function clickThenSendPage(ins, token) {
+  chrome.storage.local.get({ allowRedirect: false }, ({ allowRedirect }) => {
+    if (!allowRedirect) {
+      console.log("[EXT] User didn't allow redirect, so won't click", ins.xpath);
+      return;
+    }
+    const send = (error) => sendPageAfterClick(ins, token, error);
+
+    let target, region;
+    try {
+      target = firstNodeAt(ins.xpath);
+      region = ins.wait_for ? firstNodeAt(ins.wait_for) : null;
+    } catch (err) {
+      send(`Invalid XPath: ${err}`);
+      return;
+    }
+    if (!target) {
+      send(`Element to click not found: ${ins.xpath}`);
+      return;
+    }
+
+    console.log("[EXT] Clicking", ins.xpath);
+    changeAfterClick(ins.wait_for, region).then(send);
+    clickOn(target);
+  });
+}
+
+function firstNodeAt(xpath) {
+  return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+}
+
+// SVG elements have no click().
+function clickOn(target) {
+  if (typeof target.click === "function") target.click();
+  else target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
+// Resolves to "" once the page has been quiet for a moment after a change in
+// the wait_for element (or anywhere, without one), or to an error message when
+// nothing changed in time. The wait_for element may also be added by the click.
+function changeAfterClick(waitFor, regionBefore) {
+  return new Promise((resolve) => {
+    let timer = setTimeout(() => finish("Nothing changed after the click"), CLICK_TIMEOUT_MS);
+
+    const observer = new MutationObserver((records) => {
+      const region = waitFor ? (regionBefore?.isConnected ? regionBefore : firstNodeAt(waitFor)) : null;
+      if (!records.some(record => changesRegion(record, region))) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(""), CLICK_SETTLED_AFTER_MS);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+
+    function finish(error) {
+      observer.disconnect();
+      resolve(error);
+    }
+  });
+}
+
+function changesRegion(record, region) {
+  if (!region) return !isInServerBanner(record.target);
+  return region.contains(record.target) ||
+    Array.from(record.addedNodes).some(node => node.contains(region));
+}
+
+function isInServerBanner(node) {
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  return Boolean(element?.closest("#server-banner"));
+}
+
+function sendPageAfterClick(ins, token, error) {
+  if (error) console.warn("[EXT] Click failed:", error);
+  getDomSnapshot((snapshot) => {
+    snapshot.token = token;
+    if (snapshot.meta) snapshot.meta.click = { xpath: ins.xpath, ok: !error, error: error || null };
+    sendSnapshot(snapshot);
   });
 }
 
