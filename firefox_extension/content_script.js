@@ -134,6 +134,9 @@ function applyInstructions(instructions) {
       else if (ins.type === "CLICK" && ins.xpath) {
         clickThenSendPage(ins, PAGE_TOKEN);
       }
+      else if (ins.type === "DOWNLOAD" && ins.url) {
+        downloadInChunks(ins, PAGE_TOKEN);
+      }
       else if (ins.type === "set_token" && ins.token) {
         console.log("[EXT] Setting per-tab session token:", ins.token);
         PAGE_TOKEN = ins.token;
@@ -302,6 +305,166 @@ function fetchFromPage(ins, token) {
         report(0, String(err));
       });
   });
+}
+
+// In Firefox a content script's fetch() runs as the extension; content.fetch
+// makes the request as the page, with its origin and cookies.
+const PAGE_FETCH = (typeof content !== "undefined" && content.fetch)
+  ? (url, opts) => content.fetch(url, opts)
+  : (url, opts) => fetch(url, opts);
+
+// Sites the user refused downloads from on this page: asked once, not per file.
+const REFUSED_DOWNLOAD_SITES = new Set();
+
+// Ask whether to allow downloads from origin. On yes it is added to the Allowed
+// Sites, as from the options page, so it is not asked again.
+function askToAllowSite(origin, url) {
+  if (REFUSED_DOWNLOAD_SITES.has(origin)) return Promise.resolve(false);
+  const allow = confirm(`The server wants to download a file from a site that is not in your Allowed Sites:\n\n${url}\n\nAllow "${origin}"? It will be added to the Allowed Sites.`);
+  if (!allow) {
+    REFUSED_DOWNLOAD_SITES.add(origin);
+    return Promise.resolve(false);
+  }
+  return new Promise(resolve => chrome.storage.local.get({ allowedSites: [] }, ({ allowedSites }) => {
+    chrome.storage.local.set({ allowedSites: [...allowedSites, origin] }, () => {
+      console.log("[EXT] Added to the Allowed Sites:", origin);
+      resolve(true);
+    });
+  }));
+}
+
+const CHUNK_ATTEMPTS = 3;
+
+// DOWNLOAD instruction: download a file without navigating and post it to the
+// server's /download_result in chunks of ins.chunk_bytes, one at a time, so the
+// whole file is never held in memory. The background script tries first: CORS
+// does not apply there, so it can fetch a file on another origin, with the
+// browser's cookies for that host. If it cannot fetch the file at all, the page
+// tries (with its own cookies, readable only if the file's server allows it).
+// The last post (final) carries the file's HTTP status and is answered with the
+// next instructions. A blocked or failed download is still reported so the
+// server moves on; one refused here (the user did not allow its site) is
+// reported with retry=false, since trying again cannot help.
+async function downloadInChunks(ins, token) {
+  // One post through the background script, which can reach the server. A
+  // message cannot carry binary data, so the chunk travels as a data: url.
+  const post = (params, chunk) => new Promise((resolve, reject) => {
+    const send = (data) => chrome.runtime.sendMessage(
+      { action: "sendDownloadChunk", payload: { token, ...params, data } },
+      (resp) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else if (!resp || resp.error) reject(new Error(resp ? resp.error : "no response"));
+        else resolve(resp);
+      });
+    if (!chunk) {
+      send(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => send(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(chunk);
+  });
+  const report = async (offset, status, retry = true) => {
+    try {
+      const resp = await post({ offset, final: true, status, retry }, null);
+      applyInstructions(resp.instructions || []);
+    } catch (err) {
+      console.error("[EXT] Could not report the download:", err);
+    }
+  };
+
+  const { allowRedirect, allowedSites } = await new Promise(resolve =>
+    chrome.storage.local.get({ allowRedirect: false, allowedSites: [] }, resolve));
+  if (!allowRedirect) {
+    // Interactive mode was turned off: stop here, like a blocked GET.
+    console.log("[EXT] User didn't allow redirect, so won't download", ins.url);
+    return;
+  }
+
+  let target;
+  try {
+    target = new URL(ins.url, location.href);
+  } catch (err) {
+    console.warn("[EXT] Invalid download url:", ins.url);
+    await report(0, 0, false);
+    return;
+  }
+  // The server picks the url and the request may carry the volunteer's
+  // cookies, so the file's site must be allowed, like a GET's: ask the first time.
+  if (!isSiteAllowed(allowedSites, target.origin) && !(await askToAllowSite(target.origin, target.href))) {
+    console.warn(`[EXT] Download blocked: ${target.origin} is not in the Allowed Sites`, target.href);
+    await report(0, 0, false);
+    return;
+  }
+
+  // First try: the background script downloads and posts the file itself.
+  console.log("[EXT] Downloading", target.href);
+  const first = await new Promise(resolve => chrome.runtime.sendMessage(
+    { action: "downloadFile", payload: { url: target.href, token, chunk_bytes: ins.chunk_bytes } },
+    (resp) => resolve(chrome.runtime.lastError || !resp ? { fallback: 0 } : resp)));
+  if (first.instructions) {
+    applyInstructions(first.instructions);
+    return;
+  }
+  if (first.error) {
+    console.error("[EXT] Could not report the download:", first.error);
+    return;
+  }
+  console.log(`[EXT] Background download failed (status ${first.fallback}); trying as the page`);
+
+  let offset = 0;
+  // Post one chunk, retried when it or its reply is lost. A "resend" whose
+  // offset already includes the chunk means an earlier try got through.
+  const sendChunk = async (pieces) => {
+    const chunk = new Blob(pieces);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const resp = await post({ offset }, chunk);
+        if (resp.instructions) return resp.instructions;
+        if (resp.status === "resend" && resp.offset !== offset + chunk.size) {
+          throw new Error(`server has ${resp.offset} bytes, expected ${offset}`);
+        }
+        offset += chunk.size;
+        return null;
+      } catch (err) {
+        if (attempt === CHUNK_ATTEMPTS) throw err;
+        console.warn(`[EXT] Chunk at ${offset} failed (${err}); retrying`);
+      }
+    }
+  };
+
+  // Second try: as the page, with its cookies even on another origin.
+  let status = 0;
+  try {
+    const response = await PAGE_FETCH(target.href, { credentials: "include" });
+    status = response.status;
+    if (response.ok) {
+      const reader = response.body.getReader();
+      let pieces = [], size = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) {
+          pieces.push(value);
+          size += value.length;
+        }
+        if (size >= ins.chunk_bytes || (done && size > 0)) {
+          const instructions = await sendChunk(pieces);
+          if (instructions) {
+            applyInstructions(instructions);
+            return;
+          }
+          pieces = [];
+          size = 0;
+        }
+        if (done) break;
+      }
+    }
+  } catch (err) {
+    console.warn("[EXT] Download failed:", err);
+    status = 0;
+  }
+  await report(offset, status || first.fallback);
 }
 
 const CLICK_TIMEOUT_MS = 10000;
